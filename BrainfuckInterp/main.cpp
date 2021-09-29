@@ -153,6 +153,7 @@ int main(int argc, char* argv[]) {
 	char* text = new char[len];
 	fseek(fp, 0, SEEK_SET);
 	text[fread(text, sizeof(char), len, fp)] = '\0';
+	fclose(fp);
 	while (text_index < len && text[text_index] != '\0') {
 		char c = text[text_index++];
 		auto* f = check_char(c);
@@ -166,5 +167,7 @@ int main(int argc, char* argv[]) {
 			current_buffer_index = 0;
 		}
 	}
+	delete[] text;
+	delete[] execution_buffer;
 	return EXIT_SUCCESS;
 }
