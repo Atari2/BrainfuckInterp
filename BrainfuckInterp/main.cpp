@@ -1,7 +1,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
-#include <stack>
+#include <cstdint>
 
 #ifndef CUSTOM_CELL_SIZE	// cell size in bits, valid values are 8, 16, 32, 64
 #define CELL_SIZE 8
@@ -12,7 +12,7 @@
 #endif
 
 using size_t = decltype(sizeof(void*));
-using funcptr = int(*)(int, size_t&, char*);
+using funcptr = int(*)(int);
 
 #if CELL_SIZE == 8
 #if CELL_WRAP == 1
@@ -54,34 +54,86 @@ using cell_type = uint64_t;
 // from esolangs.org
 constexpr size_t buffer_size = 30'000;
 
-// global state
-static cell_type execution_buffer[buffer_size] = { 0 };
-static std::stack<size_t> parens{};
-
 struct fn_pair {
 	char c;
 	funcptr fn;
 };
 
-int action_increment_index(int current_index, size_t&, char*) {
+class parens_stack_t {
+	size_t* m_stack_ptr = nullptr;
+	size_t m_capacity = 0;
+	size_t m_size = 0;
+
+	bool verify_capacity() {
+		return m_size < m_capacity;
+	}
+	void grow() {
+		if (m_capacity == 0) {
+			m_stack_ptr = static_cast<size_t*>(malloc(64 * sizeof(size_t)));
+		}
+		else {
+			m_capacity *= 2;
+			size_t* new_mem = static_cast<size_t*>(realloc(m_stack_ptr, m_capacity));
+			if (new_mem == nullptr) {
+				free(m_stack_ptr);
+				printf("Error while allocating memory. Exiting");
+				exit(EXIT_FAILURE);
+			}
+			m_stack_ptr = new_mem;
+		}
+	}
+	void ensure_capacity() {
+		if (!verify_capacity()) grow();
+	}
+public:
+	parens_stack_t() = default;
+	bool empty() const {
+		return m_size == 0;
+	}
+	size_t top() const {
+		return m_stack_ptr[m_size - 1];
+	}
+	void pop() {
+		if (m_size == 0) {
+			printf("Trying to pop from empty stack. Exiting.");
+			exit(EXIT_FAILURE);
+		}
+		m_size--;
+	}
+	void push(size_t val) {
+		ensure_capacity();
+		m_stack_ptr[m_size++] = val;
+	}
+	~parens_stack_t() {
+		if (m_capacity > 0 && m_stack_ptr) free(m_stack_ptr);
+	}
+};
+
+// global state
+static cell_type execution_buffer[buffer_size] = { 0 };
+static size_t text_index = 0;
+static char* text = nullptr;
+static parens_stack_t parens{};
+
+int action_increment_index(int current_index) {
 	// >
 	return current_index + 1;
 }
-int action_decrement_index(int current_index, size_t&, char*) {
+int action_decrement_index(int current_index) {
 	// <
 	return current_index - 1;
 }
-int action_increment_cell(int current_index, size_t&, char*) {
+int action_increment_cell(int current_index) {
 	// +
 	++execution_buffer[current_index];
 	return current_index;
 }
-int action_decrement_cell(int current_index, size_t&, char*) {
+int action_decrement_cell(int current_index) {
 	// -
 	--execution_buffer[current_index];
 	return current_index;
 }
-int action_print_cell(int current_index, size_t&, char*) {
+int action_print_cell(int current_index) {
 	// .
 	if constexpr (CELL_SIZE == 8) {
 		if constexpr ('\n' == 10) {
@@ -103,7 +155,7 @@ int action_print_cell(int current_index, size_t&, char*) {
 	return current_index;
 }
 
-int action_input_cell(int current_index, size_t&, char*) {
+int action_input_cell(int current_index) {
 	// ,
 	// for input we always read a char regardless
 	if constexpr ('\n' == 10) {
@@ -116,12 +168,12 @@ int action_input_cell(int current_index, size_t&, char*) {
 	return current_index;
 }
 
-int action_loop_open(int current_index, size_t& text_index, char* text_buffer) {
+int action_loop_open(int current_index) {
 	// [
 	parens.push(text_index);
 	return current_index;
 }
-int action_loop_close(int current_index, size_t& text_index, char*) {
+int action_loop_close(int current_index) {
 	// ]
 	if (parens.empty()) {
 		printf("Unbalanced []\n");
@@ -157,7 +209,6 @@ int main(int argc, char* argv[]) {
 
 	char filename_buffer[FILENAME_MAX + 1] = { 0 };
 	int current_buffer_index = 0;
-	size_t text_index = 0;
 	if (argc > 1) {
 		strncpy_s(filename_buffer, argv[1], FILENAME_MAX);
 		filename_buffer[FILENAME_MAX] = '\0';
@@ -175,7 +226,7 @@ int main(int argc, char* argv[]) {
 	}
 	fseek(fp, 0, SEEK_END);
 	auto len = static_cast<size_t>(ftell(fp));
-	char* text = new char[len];
+	text = new char[len];
 	fseek(fp, 0, SEEK_SET);
 	text[fread(text, sizeof(char), len, fp)] = '\0';
 	fclose(fp);
@@ -183,7 +234,7 @@ int main(int argc, char* argv[]) {
 		char c = text[text_index++];
 		auto* f = check_char(c);
 		if (f) {
-			current_buffer_index = f(current_buffer_index, text_index, text);
+			current_buffer_index = f(current_buffer_index);
 		}
 		// wrapping behavior
 		if (current_buffer_index < 0)
