@@ -63,13 +63,14 @@ class parens_stack_t {
 	size_t* m_stack_ptr = nullptr;
 	size_t m_capacity = 0;
 	size_t m_size = 0;
-
+	static constexpr inline size_t m_base_capacity = 64;
 	bool verify_capacity() {
 		return m_size < m_capacity;
 	}
 	void grow() {
 		if (m_capacity == 0) {
-			m_stack_ptr = static_cast<size_t*>(malloc(64 * sizeof(size_t)));
+			m_capacity = m_base_capacity;
+			m_stack_ptr = static_cast<size_t*>(malloc(m_base_capacity * sizeof(size_t)));
 		}
 		else {
 			m_capacity *= 2;
@@ -86,7 +87,7 @@ class parens_stack_t {
 		if (!verify_capacity()) grow();
 	}
 public:
-	parens_stack_t() = default;
+	constexpr parens_stack_t() = default;
 	bool empty() const {
 		return m_size == 0;
 	}
@@ -109,11 +110,26 @@ public:
 	}
 };
 
+class state {
+	static inline cell_type m_execution_buffer[buffer_size] = { 0 };
+	static inline size_t m_text_index = 0;
+	static inline char* m_text_buffer = nullptr;
+	static inline parens_stack_t m_parens_stack{};
+
+public:
+	static auto* execution_buffer() { return m_execution_buffer; }
+	static auto& text_index() { return m_text_index; }
+	static auto& parens() { return m_parens_stack; }
+	static auto* text_buffer() { return m_text_buffer; }
+	static void allocate_text_buffer(size_t size) {
+		m_text_buffer = static_cast<char*>(malloc(sizeof(char) * size));
+	}
+	static void deallocate_text_buffer() {
+		free(m_text_buffer);
+	}
+};
+
 // global state
-static cell_type execution_buffer[buffer_size] = { 0 };
-static size_t text_index = 0;
-static char* text = nullptr;
-static parens_stack_t parens{};
 
 int action_increment_index(int current_index) {
 	// >
@@ -125,31 +141,31 @@ int action_decrement_index(int current_index) {
 }
 int action_increment_cell(int current_index) {
 	// +
-	++execution_buffer[current_index];
+	++state::execution_buffer()[current_index];
 	return current_index;
 }
 int action_decrement_cell(int current_index) {
 	// -
-	--execution_buffer[current_index];
+	--state::execution_buffer()[current_index];
 	return current_index;
 }
 int action_print_cell(int current_index) {
 	// .
 	if constexpr (CELL_SIZE == 8) {
 		if constexpr ('\n' == 10) {
-			putchar(execution_buffer[current_index]);
+			putchar(state::execution_buffer()[current_index]);
 		}
 		else {
-			putchar(execution_buffer[current_index] == 10 ? '\n' : execution_buffer[current_index]);
+			putchar(state::execution_buffer()[current_index] == 10 ? '\n' : state::execution_buffer()[current_index]);
 		}
 	}
 	else {
 		// for cell sizes that are not 8 it doesn't make sense to print a char
-		if (cell_type{ '\n' } == execution_buffer[current_index]) {
+		if (cell_type{ '\n' } == state::execution_buffer()[current_index]) {
 			putchar('\n');
 		}
 		else {
-			printf(PRINT_C, execution_buffer[current_index]);
+			printf(PRINT_C, state::execution_buffer()[current_index]);
 		}
 	}
 	return current_index;
@@ -159,31 +175,31 @@ int action_input_cell(int current_index) {
 	// ,
 	// for input we always read a char regardless
 	if constexpr ('\n' == 10) {
-		execution_buffer[current_index] = static_cast<cell_type>(getchar());
+		state::execution_buffer()[current_index] = static_cast<cell_type>(getchar());
 	}
 	else {
 		char nc = getchar();
-		execution_buffer[current_index] = (nc == '\n') ? 10 : nc;
+		state::execution_buffer()[current_index] = (nc == '\n') ? 10 : nc;
 	}
 	return current_index;
 }
 
 int action_loop_open(int current_index) {
 	// [
-	parens.push(text_index);
+	state::parens().push(state::text_index());
 	return current_index;
 }
 int action_loop_close(int current_index) {
 	// ]
-	if (parens.empty()) {
+	if (state::parens().empty()) {
 		printf("Unbalanced []\n");
 		exit(EXIT_FAILURE);
 	}
-	if (execution_buffer[current_index] != 0) {
-		text_index = parens.top();
+	if (state::execution_buffer()[current_index] != 0) {
+		state::text_index() = state::parens().top();
 	}
 	else {
-		parens.pop();
+		state::parens().pop();
 	}
 	return current_index;
 }
@@ -226,23 +242,23 @@ int main(int argc, char* argv[]) {
 	}
 	fseek(fp, 0, SEEK_END);
 	auto len = static_cast<size_t>(ftell(fp));
-	text = new char[len];
+	state::allocate_text_buffer(len + 1);
 	fseek(fp, 0, SEEK_SET);
-	text[fread(text, sizeof(char), len, fp)] = '\0';
+	state::text_buffer()[fread(state::text_buffer(), sizeof(char), len, fp)] = '\0';
 	fclose(fp);
-	while (text_index < len && text[text_index] != '\0') {
-		char c = text[text_index++];
+	while (state::text_index() < len && state::text_buffer()[state::text_index()] != '\0') {
+		char c = state::text_buffer()[state::text_index()++];
 		auto* f = check_char(c);
 		if (f) {
 			current_buffer_index = f(current_buffer_index);
 		}
 		// wrapping behavior
 		if (current_buffer_index < 0)
-			current_buffer_index = buffer_size;
-		else if (current_buffer_index > buffer_size) {
+			current_buffer_index = buffer_size - 1;
+		else if (current_buffer_index >= buffer_size) {
 			current_buffer_index = 0;
 		}
 	}
-	delete[] text;
+	state::deallocate_text_buffer();
 	return EXIT_SUCCESS;
 }
